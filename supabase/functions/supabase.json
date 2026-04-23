@@ -1,0 +1,8 @@
+{
+  "functions": [
+    {
+      "name": "send-sat-email",
+      "excludeAuthentication": false
+    }
+  ]
+}
