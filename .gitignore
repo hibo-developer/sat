@@ -4,3 +4,8 @@ dist
 .env.*
 !.env.example
 supabase/.temp
+
+# Archivos locales de desarrollo
+.vscode/settings.json
+sat-release.keystore
+test-email.mjs
