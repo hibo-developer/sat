@@ -41,6 +41,109 @@ function parsearMateriales(textoMateriales) {
     });
 }
 
+function formatearCoord(valor) {
+  return Number.isFinite(Number(valor)) ? Number(valor).toFixed(5) : 'n/d';
+}
+
+function construirResumenGeolocalizacion(seguimientoTiempo) {
+  if (!seguimientoTiempo || !seguimientoTiempo.inicioIso) {
+    return null;
+  }
+
+  const lineas = ['Parte registrado desde movilidad'];
+  lineas.push(`Inicio técnico: ${seguimientoTiempo.inicioIso}`);
+
+  if (seguimientoTiempo.finIso) {
+    lineas.push(`Fin técnico: ${seguimientoTiempo.finIso}`);
+  }
+
+  if (seguimientoTiempo.ubicacionInicio) {
+    lineas.push(
+      `Geo inicio: ${formatearCoord(seguimientoTiempo.ubicacionInicio.latitud)}, ${formatearCoord(seguimientoTiempo.ubicacionInicio.longitud)}`,
+    );
+
+    if (seguimientoTiempo.ubicacionInicio.nombreLugarCompleto || seguimientoTiempo.ubicacionInicio.nombreLugar) {
+      lineas.push(
+        `Lugar inicio: ${seguimientoTiempo.ubicacionInicio.nombreLugarCompleto || seguimientoTiempo.ubicacionInicio.nombreLugar}`,
+      );
+    }
+  }
+
+  if (seguimientoTiempo.ubicacionFin) {
+    lineas.push(
+      `Geo fin: ${formatearCoord(seguimientoTiempo.ubicacionFin.latitud)}, ${formatearCoord(seguimientoTiempo.ubicacionFin.longitud)}`,
+    );
+
+    if (seguimientoTiempo.ubicacionFin.nombreLugarCompleto || seguimientoTiempo.ubicacionFin.nombreLugar) {
+      lineas.push(
+        `Lugar fin: ${seguimientoTiempo.ubicacionFin.nombreLugarCompleto || seguimientoTiempo.ubicacionFin.nombreLugar}`,
+      );
+    }
+  }
+
+  if (Number.isFinite(Number(seguimientoTiempo.distanciaMetros))) {
+    lineas.push(`Distancia geolocalizada: ${Math.round(Number(seguimientoTiempo.distanciaMetros))} m`);
+  }
+
+  if (Number.isFinite(Number(seguimientoTiempo.minutosGeo))) {
+    lineas.push(`Tiempo por geolocalización: ${Math.round(Number(seguimientoTiempo.minutosGeo))} minutos`);
+  }
+
+  return lineas.join(' | ');
+}
+
+function resolverFechaIso(valor, fallback) {
+  if (!valor) {
+    return fallback;
+  }
+
+  const fecha = new Date(valor);
+  if (!Number.isFinite(fecha.getTime())) {
+    return fallback;
+  }
+
+  return fecha.toISOString();
+}
+
+function esDataUrlImagen(valor) {
+  return /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(valor || '');
+}
+
+async function subirFirmaClienteStorage(supabase, { firmaDataUrl, clienteId, tecnicoId }) {
+  if (!esDataUrlImagen(firmaDataUrl)) {
+    return firmaDataUrl;
+  }
+
+  let blobFirma;
+  try {
+    const respuesta = await fetch(firmaDataUrl);
+    blobFirma = await respuesta.blob();
+  } catch {
+    throw new Error('No se pudo procesar la firma del cliente para subirla a Storage.');
+  }
+
+  const extension = blobFirma.type === 'image/jpeg' ? 'jpg' : 'png';
+  const nombreArchivo = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+  const rutaArchivo = `${clienteId}/${tecnicoId}/${nombreArchivo}`;
+
+  const { error: errorSubida } = await supabase.storage
+    .from('firmas-clientes')
+    .upload(rutaArchivo, blobFirma, {
+      upsert: false,
+      contentType: blobFirma.type || 'image/png',
+      cacheControl: '3600',
+    });
+
+  if (errorSubida) {
+    throw new Error(
+      `No se pudo subir la firma del cliente a Storage. Verifica bucket/policies de firmas-clientes. (${errorSubida.message})`,
+    );
+  }
+
+  const { data } = supabase.storage.from('firmas-clientes').getPublicUrl(rutaArchivo);
+  return data?.publicUrl || null;
+}
+
 export async function crearParteTrabajo(payload) {
   const supabase = obtenerClienteSupabase();
   const clienteId = limpiarTexto(payload.cliente_id);
@@ -50,6 +153,11 @@ export async function crearParteTrabajo(payload) {
   const prioridad = validarPrioridad(payload.prioridad || 'media');
   const materiales = parsearMateriales(payload.materialesTexto || '');
   const tiempoEmpleadoMinutos = validarMinutos(payload.tiempo_empleado);
+  const resumenGeo = construirResumenGeolocalizacion(payload.seguimientoTiempo);
+  const firmaEntrada = limpiarTexto(payload.firma_url);
+  const ahoraIso = new Date().toISOString();
+  const fechaInicio = resolverFechaIso(payload.seguimientoTiempo?.inicioIso, ahoraIso);
+  const fechaFin = resolverFechaIso(payload.seguimientoTiempo?.finIso, ahoraIso);
 
   if (!clienteId) {
     throw new Error('Debes seleccionar un cliente para registrar el parte.');
@@ -57,6 +165,10 @@ export async function crearParteTrabajo(payload) {
 
   if (!tecnicoId) {
     throw new Error('Debes asignar un técnico para registrar el parte.');
+  }
+
+  if (!firmaEntrada) {
+    throw new Error('La firma del cliente es obligatoria para registrar el parte.');
   }
 
   const [clienteRsp, tecnicoRsp, equipoRsp] = await Promise.all([
@@ -99,17 +211,28 @@ export async function crearParteTrabajo(payload) {
     throw new Error('El equipo seleccionado no pertenece al cliente del parte.');
   }
 
+  const firmaUrl = await subirFirmaClienteStorage(supabase, {
+    firmaDataUrl: firmaEntrada,
+    clienteId,
+    tecnicoId,
+  });
+
+  if (!firmaUrl) {
+    throw new Error('No se pudo obtener la URL pública de la firma del cliente.');
+  }
+
   const ordenPayload = {
     cliente_id: clienteId,
     equipo_id: equipoId,
     tecnico_id: tecnicoId,
     descripcion_averia: descripcionProblema,
-    tareas_realizadas: 'Parte registrado desde movilidad',
+    tareas_realizadas: resumenGeo || 'Parte registrado desde movilidad',
     tiempo_empleado_minutos: tiempoEmpleadoMinutos,
     estado: 'finalizado',
     prioridad,
-    fecha_inicio: new Date().toISOString(),
-    fecha_fin: new Date().toISOString(),
+    firma_url: firmaUrl,
+    fecha_inicio: fechaInicio,
+    fecha_fin: fechaFin,
   };
 
   const { data: orden, error: errorOrden } = await supabase

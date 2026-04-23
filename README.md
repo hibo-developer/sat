@@ -59,6 +59,10 @@ Flujo recomendado:
 
 1. Copia `.env.example` a `.env`.
 2. Completa `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
+3. Define `VITE_SAT_MAIL_ENDPOINT` para envio automatico de correo (obligatorio para informe).
+4. Opcional recomendado: define `VITE_SAT_MAIL_TOKEN` para firmar la llamada al endpoint.
+
+La app envia automaticamente el informe a `sat@cotepa.com` usando este endpoint.
 
 ## Crear esquema en Supabase
 
@@ -78,6 +82,31 @@ Migraciones adicionales disponibles:
 
 - [supabase/03_add_tiempo_empleado_minutos.sql](supabase/03_add_tiempo_empleado_minutos.sql): separa el tiempo empleado en una columna propia y migra datos antiguos.
 - [supabase/04_security_roles_rls.sql](supabase/04_security_roles_rls.sql): activa modelo de seguridad por roles (`admin`, `oficina`, `tecnico`) y elimina politicas abiertas de desarrollo.
+- [supabase/06_storage_firmas_clientes.sql](supabase/06_storage_firmas_clientes.sql): crea bucket/policies para firmas de cliente.
+- [supabase/07_storage_informes_partes.sql](supabase/07_storage_informes_partes.sql): crea bucket/policies para informes PDF.
+
+## Envio automatico de correo (Edge Function)
+
+Se incluye la funcion:
+
+- [supabase/functions/send-sat-email/index.ts](supabase/functions/send-sat-email/index.ts)
+
+Pasos:
+
+1. Configurar secrets en Supabase Functions:
+	- `RESEND_API_KEY`
+	- `SAT_FROM_EMAIL`
+	- `SAT_TO_EMAIL` (opcional, por defecto `sat@cotepa.com`)
+	- `MAIL_FUNCTION_TOKEN` (opcional recomendado)
+2. Desplegar:
+
+```bash
+supabase functions deploy send-sat-email --no-verify-jwt
+```
+
+3. En `.env` del frontend:
+	- `VITE_SAT_MAIL_ENDPOINT=https://<PROJECT_REF>.functions.supabase.co/send-sat-email`
+	- `VITE_SAT_MAIL_TOKEN=<MAIL_FUNCTION_TOKEN>` (si aplicas token)
 
 Para limpiar datos de pruebas/demo creados por este proyecto:
 
