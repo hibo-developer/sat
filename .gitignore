@@ -3,6 +3,7 @@ dist
 .vite
 build
 release-desktop
+release-desktop-fallback
 release-desktop-verify
 release-desktop-verify2
 release-desktop-verify3

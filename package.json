@@ -10,10 +10,11 @@
     "build": "vite build",
     "build:pwsh": "powershell -ExecutionPolicy Bypass -File ./scripts/build.ps1",
     "build:apk:pwsh": "powershell -ExecutionPolicy Bypass -File ./scripts/build-apk.ps1",
+    "build:desktop:pwsh": "powershell -ExecutionPolicy Bypass -File ./scripts/build-desktop.ps1",
     "preview": "vite preview",
     "desktop:dev": "concurrently \"npm:dev\" \"wait-on tcp:5173 && electron .\"",
     "desktop:start": "npm run build && electron .",
-    "desktop:build:win": "npm run build && electron-builder --win portable"
+    "desktop:build:win": "powershell -ExecutionPolicy Bypass -File ./scripts/build-desktop.ps1"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.1",
