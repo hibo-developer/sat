@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { CircleCheckBig, Clock3, Hammer, TriangleAlert, Wrench } from 'lucide-react';
+import { BarChart3, CircleCheckBig, Clock3, Download, Hammer, TriangleAlert, Wrench } from 'lucide-react';
+import JSZip from 'jszip';
 import { ToastEstado } from '../components/ToastEstado';
 import { useOrdenes } from '../hooks/useOrdenes';
 import { useDebounce } from '../hooks/useDebounce';
@@ -35,6 +36,29 @@ const OPCIONES_ESTADO_EDITABLE = [
   { value: 'en_proceso', label: 'En Proceso' },
   { value: 'pausado', label: 'Pausado' },
 ];
+
+function descargarCsv(nombreArchivo, cabeceras, filas) {
+  const separador = ';';
+  const escapar = (valor) => {
+    const texto = valor == null ? '' : String(valor);
+    if (!texto.includes(separador) && !texto.includes('"') && !texto.includes('\n')) {
+      return texto;
+    }
+    return `"${texto.replace(/"/g, '""')}"`;
+  };
+
+  const contenido = [cabeceras.map(escapar).join(separador), ...filas.map((fila) => fila.map(escapar).join(separador))].join('\n');
+  const contenidoConBom = `\uFEFF${contenido}`;
+  const blob = new Blob([contenidoConBom], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const enlace = document.createElement('a');
+  enlace.href = url;
+  enlace.download = nombreArchivo;
+  document.body.appendChild(enlace);
+  enlace.click();
+  document.body.removeChild(enlace);
+  URL.revokeObjectURL(url);
+}
 
 function FormularioNuevaOrden({ onCrear, accionEnCurso, onNotificar }) {
   const LIMITE_CATALOGO = 20;
@@ -559,6 +583,16 @@ function TarjetaOrden({ orden, tecnicosActivos, accionEnCurso, onFinalizar, onAc
               Ver foto de cierre
             </a>
           )}
+          {orden.informePdfUrl && (
+            <a
+              href={orden.informePdfUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex rounded-lg bg-marca-900 px-3 py-2 text-xs font-bold text-white"
+            >
+              Ver informe PDF
+            </a>
+          )}
         </div>
       )}
 
@@ -706,6 +740,7 @@ function TarjetaOrden({ orden, tecnicosActivos, accionEnCurso, onFinalizar, onAc
 export function ListaOrdenesView() {
   const [tecnicosActivos, setTecnicosActivos] = useState([]);
   const [toast, setToast] = useState(null);
+  const [exportandoZip, setExportandoZip] = useState(false);
   const {
     ordenes,
     ordenesFiltradas,
@@ -745,12 +780,139 @@ export function ListaOrdenesView() {
     });
   }
 
+  const ordenesFinalizadas = ordenes.filter((orden) => orden.estado === 'Finalizado');
+  const mttrMinutos = ordenesFinalizadas.length
+    ? Math.round(
+      ordenesFinalizadas.reduce((acc, orden) => acc + Number(orden.tiempoEmpleadoMinutos || 0), 0)
+        / ordenesFinalizadas.length,
+    )
+    : 0;
+  const cumplimientoSla48h = ordenesFinalizadas.length
+    ? Math.round(
+      (ordenesFinalizadas.filter((orden) => {
+        const inicio = orden.fechaInicioIso ? new Date(orden.fechaInicioIso).getTime() : NaN;
+        const fin = orden.fechaFinIso ? new Date(orden.fechaFinIso).getTime() : NaN;
+        if (!Number.isFinite(inicio) || !Number.isFinite(fin)) return false;
+        const horas = (fin - inicio) / (1000 * 60 * 60);
+        return horas <= 48;
+      }).length / ordenesFinalizadas.length) * 100,
+    )
+    : 0;
+  const firstTimeFixProxy = ordenes.length
+    ? Math.round((ordenesFinalizadas.length / ordenes.length) * 100)
+    : 0;
+  const costeTotalMateriales = ordenesFinalizadas
+    .reduce((acc, orden) => acc + Number(orden.costeMateriales || 0), 0)
+    .toFixed(2);
+
+  function exportarOrdenesCsv() {
+    const filas = ordenes.map((orden) => [
+      orden.numero_ticket || '',
+      orden.cliente,
+      orden.equipo,
+      orden.tecnico,
+      orden.estado,
+      orden.prioridad,
+      orden.tiempoEmpleadoMinutos || '',
+      orden.costeMateriales?.toFixed ? orden.costeMateriales.toFixed(2) : orden.costeMateriales,
+      orden.fechaInicioIso || '',
+      orden.fechaFinIso || '',
+      orden.informePdfUrl || '',
+    ]);
+
+    descargarCsv(
+      `ordenes-sat-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['ticket', 'cliente', 'equipo', 'tecnico', 'estado', 'prioridad', 'tiempo_min', 'coste_materiales', 'fecha_inicio', 'fecha_fin', 'informe_pdf'],
+      filas,
+    );
+  }
+
+  function exportarKpisCsv() {
+    const filas = [
+      ['Total órdenes', ordenes.length],
+      ['Órdenes finalizadas', ordenesFinalizadas.length],
+      ['MTTR (min)', mttrMinutos],
+      ['SLA <=48h (%)', cumplimientoSla48h],
+      ['First Time Fix proxy (%)', firstTimeFixProxy],
+      ['Coste materiales total (€)', costeTotalMateriales],
+    ];
+    descargarCsv(
+      `kpi-sat-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['kpi', 'valor'],
+      filas,
+    );
+  }
+
+  async function exportarInformesZip() {
+    const informes = ordenesFiltradas.filter((orden) => orden.estado === 'Finalizado' && orden.informePdfUrl);
+
+    if (!informes.length) {
+      notificar({
+        tipo: 'error',
+        titulo: 'Sin informes disponibles',
+        descripcion: 'No hay órdenes finalizadas con informe PDF para exportar.',
+      });
+      return;
+    }
+
+    setExportandoZip(true);
+
+    try {
+      const zip = new JSZip();
+      let agregados = 0;
+
+      for (const orden of informes) {
+        try {
+          const respuesta = await fetch(orden.informePdfUrl);
+          if (!respuesta.ok) {
+            continue;
+          }
+
+          const blob = await respuesta.blob();
+          const nombre = `informe-${orden.numero_ticket || orden.id}.pdf`;
+          zip.file(nombre, blob);
+          agregados += 1;
+        } catch {
+          // Ignorar informes individuales con fallo y continuar con el resto.
+        }
+      }
+
+      if (!agregados) {
+        throw new Error('No se pudo descargar ningún informe PDF.');
+      }
+
+      const contenidoZip = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(contenidoZip);
+      const enlace = document.createElement('a');
+      enlace.href = url;
+      enlace.download = `informes-sat-${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(enlace);
+      enlace.click();
+      document.body.removeChild(enlace);
+      URL.revokeObjectURL(url);
+
+      notificar({
+        tipo: 'exito',
+        titulo: 'ZIP generado',
+        descripcion: `Se descargaron ${agregados} informes en un archivo ZIP.`,
+      });
+    } catch (err) {
+      notificar({
+        tipo: 'error',
+        titulo: 'No se pudo generar el ZIP',
+        descripcion: err.message || 'Revisa conexión y permisos de acceso a informes.',
+      });
+    } finally {
+      setExportandoZip(false);
+    }
+  }
+
   if (cargando) {
     return <p className="text-sm font-semibold text-slate-600">Cargando órdenes...</p>;
   }
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-4 lg:space-y-5">
       <ToastEstado toast={toast} onClose={() => setToast(null)} />
 
       {error && (
@@ -759,11 +921,59 @@ export function ListaOrdenesView() {
         </div>
       )}
 
-      <header className="rounded-2xl bg-marca-900 p-4 text-white shadow-lg">
-        <h2 className="text-lg font-bold">Órdenes de Trabajo</h2>
+      <header className="rounded-2xl bg-marca-900 p-4 text-white shadow-lg lg:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-bold">Órdenes de Trabajo</h2>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={exportarInformesZip}
+              disabled={exportandoZip}
+              className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
+            >
+              <Download className="h-4 w-4" />
+              {exportandoZip ? 'Generando ZIP...' : 'Exportar informes ZIP'}
+            </button>
+            <button
+              type="button"
+              onClick={exportarKpisCsv}
+              className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-3 py-2 text-xs font-bold text-white"
+            >
+              <BarChart3 className="h-4 w-4" />
+              Exportar KPI
+            </button>
+            <button
+              type="button"
+              onClick={exportarOrdenesCsv}
+              className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-3 py-2 text-xs font-bold text-white"
+            >
+              <Download className="h-4 w-4" />
+              Exportar órdenes
+            </button>
+          </div>
+        </div>
         <p className="mt-1 text-sm text-slate-200">
           Consulta, crea y actualiza el estado de cada avería desde el móvil.
         </p>
+
+        <div className="mt-3 grid grid-cols-2 gap-2 text-center text-xs font-bold lg:grid-cols-4">
+          <div className="rounded-xl bg-white/10 p-2">
+            <p className="text-slate-300">MTTR</p>
+            <p className="text-base text-white">{mttrMinutos} min</p>
+          </div>
+          <div className="rounded-xl bg-white/10 p-2">
+            <p className="text-slate-300">SLA 48h</p>
+            <p className="text-base text-white">{cumplimientoSla48h}%</p>
+          </div>
+          <div className="rounded-xl bg-white/10 p-2">
+            <p className="text-slate-300">FTF proxy</p>
+            <p className="text-base text-white">{firstTimeFixProxy}%</p>
+          </div>
+          <div className="rounded-xl bg-white/10 p-2">
+            <p className="text-slate-300">Coste mat.</p>
+            <p className="text-base text-white">{costeTotalMateriales} €</p>
+          </div>
+        </div>
 
         <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs font-bold">
           <div className="rounded-xl bg-white/10 p-2">
@@ -796,32 +1006,36 @@ export function ListaOrdenesView() {
         </div>
       </header>
 
-      <FormularioNuevaOrden
-        onCrear={crearOrdenDesdeFormulario}
-        accionEnCurso={accionEnCurso}
-        onNotificar={notificar}
-      />
-
-      <div className="space-y-3 pb-20">
-        {ordenesFiltradas.map((orden) => (
-          <TarjetaOrden
-            key={orden.id}
-            orden={orden}
-            tecnicosActivos={tecnicosActivos}
+      <div className="lg:grid lg:grid-cols-12 lg:gap-4">
+        <div className="lg:col-span-4 lg:sticky lg:top-5 lg:self-start">
+          <FormularioNuevaOrden
+            onCrear={crearOrdenDesdeFormulario}
             accionEnCurso={accionEnCurso}
-            onFinalizar={finalizarOrden}
-            onActualizar={actualizarOrden}
             onNotificar={notificar}
           />
-        ))}
-      </div>
-
-      {!ordenesFiltradas.length && (
-        <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-sm font-medium text-slate-600">
-          <TriangleAlert className="h-4 w-4" />
-          No hay órdenes disponibles para el filtro seleccionado.
         </div>
-      )}
+
+        <div className="space-y-3 pb-20 lg:col-span-8 lg:pb-0">
+          {ordenesFiltradas.map((orden) => (
+            <TarjetaOrden
+              key={orden.id}
+              orden={orden}
+              tecnicosActivos={tecnicosActivos}
+              accionEnCurso={accionEnCurso}
+              onFinalizar={finalizarOrden}
+              onActualizar={actualizarOrden}
+              onNotificar={notificar}
+            />
+          ))}
+
+          {!ordenesFiltradas.length && (
+            <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-sm font-medium text-slate-600">
+              <TriangleAlert className="h-4 w-4" />
+              No hay órdenes disponibles para el filtro seleccionado.
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

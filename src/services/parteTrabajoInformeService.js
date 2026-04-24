@@ -3,6 +3,32 @@ import { obtenerClienteSupabase } from './supabaseClient';
 
 const DESTINO_SAT = 'sat@cotepa.com';
 
+export function obtenerUrlPublicaInformeParte(clienteId, parteId) {
+  const cliente = valorTexto(clienteId, '').trim();
+  const parte = valorTexto(parteId, '').trim();
+
+  if (!cliente || !parte) {
+    return '';
+  }
+
+  const supabase = obtenerClienteSupabase();
+  const ruta = `${cliente}/informe-parte-${parte}.pdf`;
+  const { data } = supabase.storage.from('informes-partes').getPublicUrl(ruta);
+
+  return data?.publicUrl || '';
+}
+
+function resolverDestinoCorreo(destinoSolicitado) {
+  const destino = valorTexto(destinoSolicitado, DESTINO_SAT);
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailRegex.test(destino)) {
+    throw new Error('El correo destino no es valido.');
+  }
+
+  return destino;
+}
+
 function valorTexto(valor, fallback = 'N/D') {
   const texto = typeof valor === 'string' ? valor.trim() : '';
   return texto || fallback;
@@ -56,7 +82,33 @@ function agregarLinea(doc, texto, estado, opciones = {}) {
   });
 }
 
-function crearPdfInforme({ parte, formulario, seguimientoTiempo, clienteNombre, equipoNombre, tecnicoNombre, firmaUrl }) {
+async function urlADataUrl(url) {
+  try {
+    const respuesta = await fetch(url);
+    if (!respuesta.ok) return null;
+    const blob = await respuesta.blob();
+    return await new Promise((resolve) => {
+      const lector = new FileReader();
+      lector.onload = () => resolve(lector.result);
+      lector.onerror = () => resolve(null);
+      lector.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function crearPdfInforme({
+  parte,
+  formulario,
+  seguimientoTiempo,
+  clienteNombre,
+  equipoNombre,
+  tecnicoNombre,
+  firmaUrl,
+  fotosIntervencionUrls,
+  destinoCorreo,
+}) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const estado = { y: 18 };
   const materiales = materialesDesdeTexto(formulario.materialesTexto);
@@ -72,6 +124,7 @@ function crearPdfInforme({ parte, formulario, seguimientoTiempo, clienteNombre, 
   agregarLinea(doc, `Cliente: ${clienteNombre}`, estado);
   agregarLinea(doc, `Equipo: ${equipoNombre}`, estado);
   agregarLinea(doc, `Tecnico: ${tecnicoNombre}`, estado);
+  agregarLinea(doc, `Destino correo: ${destinoCorreo}`, estado);
   agregarLinea(doc, `Prioridad: ${valorTexto(formulario.prioridad)}`, estado);
   agregarLinea(doc, `Tiempo empleado (min): ${valorTexto(String(formulario.tiempo_empleado))}`, estado);
 
@@ -119,9 +172,67 @@ function crearPdfInforme({ parte, formulario, seguimientoTiempo, clienteNombre, 
 
   estado.y += 3;
   doc.setFont('helvetica', 'bold');
-  agregarLinea(doc, 'Firma del cliente (URL):', estado);
+  agregarLinea(doc, 'Fotos de la intervencion:', estado);
   doc.setFont('helvetica', 'normal');
-  agregarLinea(doc, valorTexto(firmaUrl), estado);
+
+  if (!Array.isArray(fotosIntervencionUrls) || fotosIntervencionUrls.length === 0) {
+    agregarLinea(doc, 'Sin fotos adjuntas.', estado);
+  } else {
+    const MAX_ANCHO = 180;
+    const MAX_ALTO = 100;
+    for (let i = 0; i < fotosIntervencionUrls.length; i++) {
+      const dataUrl = await urlADataUrl(fotosIntervencionUrls[i]);
+      if (!dataUrl) {
+        agregarLinea(doc, `Foto ${i + 1}: no se pudo cargar.`, estado);
+        continue;
+      }
+      // Calcular dimensiones proporcionales
+      await new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const ratio = img.naturalWidth / img.naturalHeight;
+          let w = MAX_ANCHO;
+          let h = w / ratio;
+          if (h > MAX_ALTO) {
+            h = MAX_ALTO;
+            w = h * ratio;
+          }
+          if (estado.y + h + 4 > 285) {
+            doc.addPage();
+            estado.y = 20;
+          }
+          doc.addImage(dataUrl, 'JPEG', 15, estado.y, w, h);
+          estado.y += h + 5;
+          resolve();
+        };
+        img.onerror = () => resolve();
+        img.src = dataUrl;
+      });
+    }
+  }
+
+  estado.y += 3;
+  doc.setFont('helvetica', 'bold');
+  agregarLinea(doc, 'Firma del cliente:', estado);
+  doc.setFont('helvetica', 'normal');
+
+  if (firmaUrl) {
+    const firmaDataUrl = await urlADataUrl(firmaUrl);
+    if (firmaDataUrl) {
+      const FIRMA_ANCHO = 80;
+      const FIRMA_ALTO = 40;
+      if (estado.y + FIRMA_ALTO + 4 > 285) {
+        doc.addPage();
+        estado.y = 20;
+      }
+      doc.addImage(firmaDataUrl, 'PNG', 15, estado.y, FIRMA_ANCHO, FIRMA_ALTO);
+      estado.y += FIRMA_ALTO + 5;
+    } else {
+      agregarLinea(doc, valorTexto(firmaUrl), estado);
+    }
+  } else {
+    agregarLinea(doc, 'Sin firma.', estado);
+  }
 
   const nombreArchivo = `informe-parte-${parte.id || Date.now()}.pdf`;
   const pdfBlob = doc.output('blob');
@@ -151,37 +262,46 @@ async function subirPdfInforme({ pdfBlob, nombreArchivo, clienteId }) {
   return data?.publicUrl || null;
 }
 
-async function enviarCorreoInforme({ pdfUrl, parteId }) {
+async function enviarCorreoInforme({ pdfUrl, parteId, destinoCorreo, fotosIntervencionUrls }) {
   const asunto = `Informe parte de trabajo ${parteId}`;
   const cuerpo = [
     'Adjuntamos el informe del parte de trabajo generado desde SAT Movil.',
     '',
     `Parte: ${parteId}`,
     `PDF: ${pdfUrl}`,
+    fotosIntervencionUrls && fotosIntervencionUrls.length > 0
+      ? `Fotos: ${fotosIntervencionUrls.join(' | ')}`
+      : 'Fotos: Sin adjuntos',
   ].join('\n');
 
   const endpoint = import.meta.env.VITE_SAT_MAIL_ENDPOINT;
 
   if (!endpoint) {
     throw new Error(
-      'Falta configurar VITE_SAT_MAIL_ENDPOINT para enviar el informe automaticamente a sat@cotepa.com.',
+      'Falta configurar VITE_SAT_MAIL_ENDPOINT para enviar el informe automaticamente por correo.',
     );
   }
 
-  const token = import.meta.env.VITE_SAT_MAIL_TOKEN;
+  const supabase = obtenerClienteSupabase();
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError || !session?.access_token) {
+    throw new Error('No hay sesion valida para enviar correos. Inicia sesion de nuevo.');
+  }
+
   const headers = {
     'Content-Type': 'application/json',
+    Authorization: `Bearer ${session.access_token}`,
   };
-
-  if (token) {
-    headers['x-mail-token'] = token;
-  }
 
   const respuesta = await fetch(endpoint, {
     method: 'POST',
     headers,
     body: JSON.stringify({
-      to: DESTINO_SAT,
+      to: destinoCorreo,
       subject: asunto,
       text: cuerpo,
       pdfUrl,
@@ -204,8 +324,12 @@ export async function generarYEnviarInformeParte({
   equipoNombre,
   tecnicoNombre,
   firmaUrl,
+  destinoEmail,
+  fotosIntervencionUrls,
 }) {
-  const { pdfBlob, nombreArchivo } = crearPdfInforme({
+  const destinoCorreo = resolverDestinoCorreo(destinoEmail);
+
+  const { pdfBlob, nombreArchivo } = await crearPdfInforme({
     parte,
     formulario,
     seguimientoTiempo,
@@ -213,6 +337,8 @@ export async function generarYEnviarInformeParte({
     equipoNombre,
     tecnicoNombre,
     firmaUrl,
+    fotosIntervencionUrls,
+    destinoCorreo,
   });
 
   const pdfUrl = await subirPdfInforme({
@@ -228,11 +354,13 @@ export async function generarYEnviarInformeParte({
   const envio = await enviarCorreoInforme({
     pdfUrl,
     parteId: parte.id || 'sin-id',
+    destinoCorreo,
+    fotosIntervencionUrls,
   });
 
   return {
     pdfUrl,
-    destino: DESTINO_SAT,
+    destino: destinoCorreo,
     metodoEnvio: envio.metodo,
   };
 }

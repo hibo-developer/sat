@@ -7,11 +7,13 @@ const ITEMS = [
   { key: 'admin', label: 'Admin', icono: Settings },
 ];
 
-export function NavbarInferior({ vistaActiva, onCambiarVista }) {
+export function NavbarInferior({ vistaActiva, onCambiarVista, mostrarAdmin = false }) {
+  const itemsVisibles = mostrarAdmin ? ITEMS : ITEMS.filter((item) => item.key !== 'admin');
+
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-20 border-t border-marca-100 bg-white/95 px-3 pb-3 pt-2 shadow-2xl backdrop-blur">
-      <ul className="mx-auto flex max-w-md items-center justify-between gap-2">
-        {ITEMS.map((item) => {
+    <nav className="fixed bottom-0 left-0 right-0 z-20 border-t border-marca-100 bg-white/95 px-3 pb-3 pt-2 shadow-2xl backdrop-blur lg:hidden">
+      <ul className="mx-auto flex max-w-md items-center justify-between gap-2 sm:max-w-lg">
+        {itemsVisibles.map((item) => {
           const Icono = item.icono;
           const activo = vistaActiva === item.key;
 

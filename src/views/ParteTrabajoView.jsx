@@ -4,7 +4,8 @@ import {
   obtenerEquiposPorCliente,
   obtenerTecnicosActivos,
 } from '../services/catalogosService';
-import { crearParteTrabajo } from '../services/parteTrabajoService';
+import { listarMaterialesInventario } from '../services/inventarioMaterialesService';
+import { crearParteTrabajo, obtenerOrdenesAbiertasParaParte } from '../services/parteTrabajoService';
 import { generarYEnviarInformeParte } from '../services/parteTrabajoInformeService';
 import { tieneConfiguracionSupabase } from '../services/supabaseClient';
 
@@ -118,6 +119,7 @@ function formatearLugar(ubicacion) {
 }
 
 const FORM_INICIAL = {
+  orden_id: '',
   cliente_id: '',
   equipo_id: '',
   tecnico_id: '',
@@ -125,6 +127,7 @@ const FORM_INICIAL = {
   materialesTexto: '',
   tiempo_empleado: '60',
   prioridad: 'media',
+  destino_email: 'sat@cotepa.com',
 };
 
 export function ParteTrabajoView() {
@@ -139,7 +142,13 @@ export function ParteTrabajoView() {
   });
   const [clientes, setClientes] = useState([]);
   const [equipos, setEquipos] = useState([]);
+  const [ordenesAbiertas, setOrdenesAbiertas] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
+  const [materialesInventario, setMaterialesInventario] = useState([]);
+  const [materialSeleccionadoId, setMaterialSeleccionadoId] = useState('');
+  const [materialSeleccionadoCantidad, setMaterialSeleccionadoCantidad] = useState('1');
+  const [materialesSeleccionados, setMaterialesSeleccionados] = useState([]);
+  const [fotosIntervencion, setFotosIntervencion] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [capturandoTiempo, setCapturandoTiempo] = useState(false);
@@ -160,13 +169,15 @@ export function ParteTrabajoView() {
       setError('');
 
       try {
-        const [clientesRsp, tecnicosRsp] = await Promise.all([
+        const [clientesRsp, tecnicosRsp, materialesRsp] = await Promise.all([
           obtenerClientes({ limite: 100, pagina: 1 }),
           obtenerTecnicosActivos({ limite: 100, pagina: 1 }),
+          listarMaterialesInventario({ soloActivos: true }),
         ]);
 
         setClientes(clientesRsp.items);
         setTecnicos(tecnicosRsp.items);
+        setMaterialesInventario(materialesRsp || []);
       } catch (err) {
         setError(err.message || 'No se pudieron cargar los catálogos del parte de trabajo.');
       } finally {
@@ -198,6 +209,35 @@ export function ParteTrabajoView() {
 
     cargarEquipos();
   }, [formulario.cliente_id]);
+
+  useEffect(() => {
+    async function cargarOrdenesAbiertas() {
+      if (!formulario.cliente_id || !formulario.tecnico_id || !tieneConfiguracionSupabase()) {
+        setOrdenesAbiertas([]);
+        setFormulario((prev) => ({ ...prev, orden_id: '' }));
+        return;
+      }
+
+      try {
+        const ordenes = await obtenerOrdenesAbiertasParaParte({
+          cliente_id: formulario.cliente_id,
+          tecnico_id: formulario.tecnico_id,
+        });
+        setOrdenesAbiertas(ordenes);
+        setFormulario((prev) => {
+          if (prev.orden_id && ordenes.some((orden) => orden.id === prev.orden_id)) {
+            return prev;
+          }
+
+          return { ...prev, orden_id: '' };
+        });
+      } catch (err) {
+        setError(err.message || 'No se pudieron cargar las ordenes abiertas para el parte.');
+      }
+    }
+
+    cargarOrdenesAbiertas();
+  }, [formulario.cliente_id, formulario.tecnico_id]);
 
   useEffect(() => {
     prepararCanvasFirma();
@@ -360,6 +400,15 @@ export function ParteTrabajoView() {
     }
   }
 
+  function manejarSeleccionFotos(evento) {
+    const archivos = Array.from(evento.target.files || []);
+    setFotosIntervencion(archivos);
+  }
+
+  function quitarFotoIntervencion(indiceObjetivo) {
+    setFotosIntervencion((prev) => prev.filter((_, indice) => indice !== indiceObjetivo));
+  }
+
   async function enviarParte(evento) {
     evento.preventDefault();
     setMensaje('');
@@ -375,13 +424,21 @@ export function ParteTrabajoView() {
       return;
     }
 
+    if (!formulario.orden_id) {
+      setError('Debes seleccionar una orden abierta para registrar el parte.');
+      return;
+    }
+
     setGuardando(true);
 
     try {
       const parte = await crearParteTrabajo({
         ...formulario,
+        orden_id: formulario.orden_id,
         equipo_id: formulario.equipo_id || null,
         tecnico_id: formulario.tecnico_id || null,
+        materialesInventario: materialesSeleccionados,
+        fotos_intervencion: fotosIntervencion,
         seguimientoTiempo,
         firma_url: firmaClienteDataUrl,
       });
@@ -389,15 +446,36 @@ export function ParteTrabajoView() {
       const clienteSeleccionado = clientes.find((c) => c.id === formulario.cliente_id);
       const equipoSeleccionado = equipos.find((e) => e.id === formulario.equipo_id);
       const tecnicoSeleccionado = tecnicos.find((t) => t.id === formulario.tecnico_id);
+      const materialesInventarioTexto = materialesSeleccionados
+        .map((uso) => {
+          const material = materialesInventario.find((m) => m.id === uso.material_id);
+          if (!material) {
+            return null;
+          }
+
+          const precio = material.precio_ref ?? 'N/D';
+          return `${material.nombre};${uso.cantidad};${precio}`;
+        })
+        .filter(Boolean)
+        .join('\n');
+
+      const materialesTextoInforme = [materialesInventarioTexto, formulario.materialesTexto]
+        .filter((bloque) => (bloque || '').trim())
+        .join('\n');
 
       const informe = await generarYEnviarInformeParte({
         parte,
-        formulario,
+        formulario: {
+          ...formulario,
+          materialesTexto: materialesTextoInforme,
+        },
         seguimientoTiempo,
         clienteNombre: clienteSeleccionado?.nombre || 'Cliente no identificado',
         equipoNombre: equipoSeleccionado?.nombre || 'Sin equipo',
         tecnicoNombre: tecnicoSeleccionado?.nombre || 'Tecnico no identificado',
         firmaUrl: parte.firma_url || '',
+        destinoEmail: formulario.destino_email,
+        fotosIntervencionUrls: parte.fotos_intervencion_urls || [],
       });
 
       setMensaje(
@@ -414,11 +492,48 @@ export function ParteTrabajoView() {
       });
       limpiarFirma();
       setEquipos([]);
+      setOrdenesAbiertas([]);
+      setMaterialesSeleccionados([]);
+      setMaterialSeleccionadoId('');
+      setMaterialSeleccionadoCantidad('1');
+      setFotosIntervencion([]);
     } catch (err) {
       setError(err.message || 'No se pudo registrar el parte de trabajo.');
     } finally {
       setGuardando(false);
     }
+  }
+
+  function agregarMaterialInventario() {
+    const materialId = materialSeleccionadoId;
+    const cantidad = Number.parseInt(materialSeleccionadoCantidad, 10);
+
+    if (!materialId) {
+      setError('Selecciona un material de inventario para agregarlo al parte.');
+      return;
+    }
+
+    if (!Number.isFinite(cantidad) || cantidad <= 0) {
+      setError('La cantidad del material debe ser mayor que cero.');
+      return;
+    }
+
+    setError('');
+    setMaterialesSeleccionados((prev) => {
+      const existente = prev.find((item) => item.material_id === materialId);
+      if (existente) {
+        return prev.map((item) =>
+          item.material_id === materialId ? { ...item, cantidad: item.cantidad + cantidad } : item,
+        );
+      }
+
+      return [...prev, { material_id: materialId, cantidad }];
+    });
+    setMaterialSeleccionadoCantidad('1');
+  }
+
+  function quitarMaterialInventario(materialId) {
+    setMaterialesSeleccionados((prev) => prev.filter((item) => item.material_id !== materialId));
   }
 
   if (!tieneConfiguracionSupabase()) {
@@ -430,9 +545,9 @@ export function ParteTrabajoView() {
   }
 
   return (
-    <section className="space-y-4 pb-20">
-      <header className="rounded-2xl bg-marca-900 p-4 text-white shadow-lg">
-        <h2 className="text-lg font-bold">Parte de Trabajo</h2>
+    <section className="space-y-4 pb-20 lg:pb-0">
+      <header className="rounded-2xl bg-marca-900 p-4 text-white shadow-lg lg:p-5">
+        <h2 className="text-lg font-bold lg:text-xl">Parte de Trabajo</h2>
         <p className="mt-1 text-sm text-slate-200">Registro técnico para cierre operativo de averías.</p>
       </header>
 
@@ -443,16 +558,16 @@ export function ParteTrabajoView() {
         </p>
       )}
 
-      <form onSubmit={enviarParte} className="space-y-3 rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta">
-        <h2 className="text-lg font-bold text-marca-900">Detalle del parte</h2>
-        <p className="text-xs text-slate-600">
-          En materiales usa una línea por material con formato: nombre;cantidad;precio
+      <form onSubmit={enviarParte} className="grid gap-3 rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta lg:grid-cols-2 lg:gap-4 lg:p-5">
+        <h2 className="text-lg font-bold text-marca-900 lg:col-span-2">Detalle del parte</h2>
+        <p className="text-xs text-slate-600 lg:col-span-2">
+          El parte cierra una orden abierta y permite consumir materiales desde inventario.
         </p>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-500 lg:col-span-2">
           El parte queda finalizado al guardarlo, así que necesita técnico y tiempo empleado válidos.
         </p>
 
-        <div className="rounded-xl border border-marca-200 bg-marca-50 p-3">
+        <div className="rounded-xl border border-marca-200 bg-marca-50 p-3 lg:col-span-2">
           <p className="text-xs font-semibold text-marca-900">Control de tiempo por inicio/fin + geolocalización</p>
           <div className="mt-2 grid grid-cols-2 gap-2">
             <button
@@ -496,7 +611,7 @@ export function ParteTrabajoView() {
             required
             value={formulario.cliente_id}
             onChange={(e) =>
-              setFormulario((prev) => ({ ...prev, cliente_id: e.target.value, equipo_id: '' }))
+              setFormulario((prev) => ({ ...prev, cliente_id: e.target.value, equipo_id: '', orden_id: '' }))
             }
             className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
             disabled={cargando}
@@ -532,7 +647,7 @@ export function ParteTrabajoView() {
           <select
             required
             value={formulario.tecnico_id}
-            onChange={(e) => setFormulario((prev) => ({ ...prev, tecnico_id: e.target.value }))}
+            onChange={(e) => setFormulario((prev) => ({ ...prev, tecnico_id: e.target.value, orden_id: '' }))}
             className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
           >
             <option value="">Selecciona técnico</option>
@@ -545,6 +660,34 @@ export function ParteTrabajoView() {
         </label>
 
         <label className="block">
+          <span className="mb-1 block text-xs font-semibold text-slate-700">Orden abierta *</span>
+          <select
+            required
+            value={formulario.orden_id}
+            onChange={(e) => {
+              const ordenId = e.target.value;
+              const orden = ordenesAbiertas.find((item) => item.id === ordenId);
+              setFormulario((prev) => ({
+                ...prev,
+                orden_id: ordenId,
+                equipo_id: orden?.equipo_id || '',
+                descripcion_problema: orden?.descripcion_averia || prev.descripcion_problema,
+                prioridad: orden?.prioridad || prev.prioridad,
+              }));
+            }}
+            className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
+            disabled={!formulario.cliente_id || !formulario.tecnico_id}
+          >
+            <option value="">Selecciona orden abierta</option>
+            {ordenesAbiertas.map((orden) => (
+              <option key={orden.id} value={orden.id}>
+                #{orden.numero_ticket} · {orden.descripcion_averia}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block lg:col-span-2">
           <span className="mb-1 block text-xs font-semibold text-slate-700">Descripción del problema *</span>
           <textarea
             required
@@ -556,7 +699,7 @@ export function ParteTrabajoView() {
           />
         </label>
 
-        <label className="block">
+        <label className="block lg:col-span-2">
           <span className="mb-1 block text-xs font-semibold text-slate-700">Materiales utilizados</span>
           <textarea
             rows={4}
@@ -566,6 +709,62 @@ export function ParteTrabajoView() {
             placeholder={"Ejemplo:\nGas R32;1;45.5\nFiltro;2;12"}
           />
         </label>
+
+        <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3 lg:col-span-2">
+          <p className="text-xs font-semibold text-slate-700">Materiales desde inventario (descuenta stock)</p>
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              <select
+                value={materialSeleccionadoId}
+                onChange={(e) => setMaterialSeleccionadoId(e.target.value)}
+                className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">Selecciona material</option>
+                {materialesInventario.map((material) => (
+                  <option key={material.id} value={material.id}>
+                    {material.nombre} · stock {material.stock_actual}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min="1"
+                value={materialSeleccionadoCantidad}
+                onChange={(e) => setMaterialSeleccionadoCantidad(e.target.value)}
+                className="w-16 rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={agregarMaterialInventario}
+              className="w-full rounded-xl bg-marca-900 px-4 py-2 text-sm font-bold text-white"
+            >
+              Agregar
+            </button>
+          </div>
+
+          {materialesSeleccionados.length > 0 && (
+            <ul className="space-y-1">
+              {materialesSeleccionados.map((uso) => {
+                const material = materialesInventario.find((item) => item.id === uso.material_id);
+                return (
+                  <li key={uso.material_id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs">
+                    <span>
+                      {material?.nombre || 'Material'} · {uso.cantidad} {material?.unidad || 'ud'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => quitarMaterialInventario(uso.material_id)}
+                      className="rounded-lg bg-rose-100 px-2 py-1 font-semibold text-rose-700"
+                    >
+                      Quitar
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
 
         <label className="block">
           <span className="mb-1 block text-xs font-semibold text-slate-700">Tiempo empleado (min) *</span>
@@ -592,6 +791,47 @@ export function ParteTrabajoView() {
             <option value="urgente">Urgente</option>
           </select>
         </label>
+
+        <label className="block lg:col-span-2">
+          <span className="mb-1 block text-xs font-semibold text-slate-700">Enviar informe a *</span>
+          <input
+            required
+            type="email"
+            value={formulario.destino_email}
+            onChange={(e) => setFormulario((prev) => ({ ...prev, destino_email: e.target.value }))}
+            className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
+            placeholder="correo@dominio.com"
+          />
+        </label>
+
+        <div className="rounded-xl border border-slate-300 bg-slate-50 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-700">Fotos de la intervención</span>
+          </div>
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={manejarSeleccionFotos}
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"
+          />
+          {fotosIntervencion.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {fotosIntervencion.map((foto, indice) => (
+                <li key={`${foto.name}-${indice}`} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs">
+                  <span className="truncate pr-2">{foto.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => quitarFotoIntervencion(indice)}
+                    className="rounded-lg bg-rose-100 px-2 py-1 font-semibold text-rose-700"
+                  >
+                    Quitar
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         <div className="rounded-xl border border-slate-300 bg-slate-50 p-3">
           <div className="mb-2 flex items-center justify-between">
@@ -623,7 +863,7 @@ export function ParteTrabajoView() {
         <button
           type="submit"
           disabled={guardando || cargando || !seguimientoTiempo.inicioIso || !seguimientoTiempo.finIso || !firmaClienteDataUrl}
-          className="w-full rounded-2xl bg-cotepa-rojo-500 px-4 py-4 text-sm font-bold text-white disabled:opacity-60"
+          className="w-full rounded-2xl bg-cotepa-rojo-500 px-4 py-4 text-sm font-bold text-white disabled:opacity-60 lg:col-span-2"
         >
           {guardando ? 'Guardando parte...' : 'Registrar parte de trabajo'}
         </button>

@@ -172,6 +172,7 @@ export async function obtenerOrdenesTrabajo() {
       prioridad,
       foto_url,
       fecha_inicio,
+      fecha_fin,
       clientes ( id, nombre ),
       equipos ( id, nombre, marca, modelo ),
       tecnicos ( id, nombre ),

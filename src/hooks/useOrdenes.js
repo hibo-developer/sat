@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { obtenerOrdenes } from '../services/ordenesService';
+import { obtenerUrlPublicaInformeParte } from '../services/parteTrabajoInformeService';
 import {
   actualizarOrdenTrabajo,
   crearOrdenTrabajo,
@@ -46,6 +47,7 @@ function adaptarOrdenSupabase(orden) {
   return {
     id: orden.id,
     numero_ticket: orden.numero_ticket,
+    clienteId: orden.clientes?.id || '',
     cliente: orden.clientes?.nombre || 'Cliente sin nombre',
     equipo: orden.equipos?.nombre || 'Equipo no especificado',
     tecnicoId: orden.tecnicos?.id || '',
@@ -56,6 +58,9 @@ function adaptarOrdenSupabase(orden) {
     materiales,
     costeMateriales,
     tiempoEmpleadoMinutos,
+    fechaInicioIso: orden.fecha_inicio || null,
+    fechaFinIso: orden.fecha_fin || null,
+    informePdfUrl: obtenerUrlPublicaInformeParte(orden.clientes?.id, orden.id),
     estado: estadoBackendAUi(orden.estado),
     prioridad: orden.prioridad,
     fecha: new Date(orden.fecha_inicio).toLocaleDateString('es-ES'),

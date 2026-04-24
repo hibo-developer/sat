@@ -11,6 +11,12 @@ import {
   eliminarEquipo,
   listarEquipos,
 } from '../services/equiposService';
+import {
+  actualizarMaterialInventario,
+  crearMaterialInventario,
+  eliminarMaterialInventario,
+  listarMaterialesInventario,
+} from '../services/inventarioMaterialesService';
 import { tieneConfiguracionSupabase } from '../services/supabaseClient';
 
 const FORM_CLIENTE_INICIAL = {
@@ -29,10 +35,20 @@ const FORM_EQUIPO_INICIAL = {
   ultima_revision: '',
 };
 
+const FORM_MATERIAL_INICIAL = {
+  nombre: '',
+  descripcion: '',
+  unidad: 'ud',
+  stock_actual: '0',
+  precio_ref: '',
+  activo: true,
+};
+
 export function ClientesView() {
   const [tabActiva, setTabActiva] = useState('clientes');
   const [clientes, setClientes] = useState([]);
   const [equipos, setEquipos] = useState([]);
+  const [materialesInventario, setMaterialesInventario] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
   const [mensaje, setMensaje] = useState('');
@@ -43,6 +59,8 @@ export function ClientesView() {
   const [equipoForm, setEquipoForm] = useState(FORM_EQUIPO_INICIAL);
   const [equipoEditandoId, setEquipoEditandoId] = useState('');
   const [busquedaEquipo, setBusquedaEquipo] = useState('');
+  const [materialForm, setMaterialForm] = useState(FORM_MATERIAL_INICIAL);
+  const [materialEditandoId, setMaterialEditandoId] = useState('');
 
   const sinConfiguracion = useMemo(() => !tieneConfiguracionSupabase(), []);
   const equiposFiltrados = useMemo(() => {
@@ -79,14 +97,16 @@ export function ClientesView() {
     setError('');
 
     try {
-      const [datosClientes, datosEquipos] = await Promise.all([
+      const [datosClientes, datosEquipos, datosMateriales] = await Promise.all([
         listarClientes(),
         listarEquipos(),
+        listarMaterialesInventario(),
       ]);
       setClientes(datosClientes);
       setEquipos(datosEquipos);
+      setMaterialesInventario(datosMateriales || []);
     } catch (err) {
-      setError(err.message || 'No se pudieron cargar clientes, técnicos y equipos.');
+      setError(err.message || 'No se pudieron cargar clientes, equipos y materiales.');
     } finally {
       setCargando(false);
     }
@@ -104,6 +124,11 @@ export function ClientesView() {
   function limpiarFormEquipo() {
     setEquipoForm(FORM_EQUIPO_INICIAL);
     setEquipoEditandoId('');
+  }
+
+  function limpiarFormMaterial() {
+    setMaterialForm(FORM_MATERIAL_INICIAL);
+    setMaterialEditandoId('');
   }
 
   async function guardarCliente(evento) {
@@ -188,6 +213,52 @@ export function ClientesView() {
     }
   }
 
+  async function guardarMaterial(evento) {
+    evento.preventDefault();
+    setMensaje('');
+    setError('');
+
+    try {
+      const payload = {
+        nombre: materialForm.nombre,
+        descripcion: materialForm.descripcion || null,
+        unidad: materialForm.unidad || 'ud',
+        stock_actual: materialForm.stock_actual,
+        precio_ref: materialForm.precio_ref,
+        activo: materialForm.activo,
+      };
+
+      if (materialEditandoId) {
+        await actualizarMaterialInventario(materialEditandoId, payload);
+        setMensaje('Material actualizado correctamente.');
+      } else {
+        await crearMaterialInventario(payload);
+        setMensaje('Material creado correctamente.');
+      }
+
+      limpiarFormMaterial();
+      await recargarDatos();
+    } catch (err) {
+      setError(err.message || 'No se pudo guardar el material de inventario.');
+    }
+  }
+
+  async function borrarMaterial(idMaterial) {
+    setMensaje('');
+    setError('');
+
+    try {
+      await eliminarMaterialInventario(idMaterial);
+      setMensaje('Material eliminado correctamente.');
+      if (materialEditandoId === idMaterial) {
+        limpiarFormMaterial();
+      }
+      await recargarDatos();
+    } catch (err) {
+      setError(err.message || 'No se pudo eliminar el material de inventario.');
+    }
+  }
+
   if (sinConfiguracion) {
     return (
       <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
@@ -197,13 +268,13 @@ export function ClientesView() {
   }
 
   return (
-    <section className="space-y-4">
-      <header className="rounded-2xl bg-marca-900 p-4 text-white shadow-lg">
+    <section className="space-y-4 pb-20 lg:pb-0">
+      <header className="rounded-2xl bg-marca-900 p-4 text-white shadow-lg lg:p-5">
         <h2 className="text-lg font-bold">Catálogos SAT</h2>
-        <p className="mt-1 text-sm text-slate-200">Gestión de clientes y equipos en entorno COTEPA.</p>
+        <p className="mt-1 text-sm text-slate-200">Gestión de clientes, equipos e inventario de materiales.</p>
       </header>
 
-      <div className="grid grid-cols-2 gap-2 rounded-2xl border border-marca-100 bg-marca-50 p-1">
+      <div className="grid grid-cols-3 gap-2 rounded-2xl border border-marca-100 bg-marca-50 p-1">
         <button
           type="button"
           onClick={() => setTabActiva('clientes')}
@@ -222,6 +293,15 @@ export function ClientesView() {
         >
           Equipos
         </button>
+        <button
+          type="button"
+          onClick={() => setTabActiva('materiales')}
+          className={`rounded-xl px-3 py-3 text-sm font-bold ${
+            tabActiva === 'materiales' ? 'bg-cotepa-rojo-500 text-white shadow' : 'text-marca-700'
+          }`}
+        >
+          Materiales
+        </button>
       </div>
 
       {error && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
@@ -233,93 +313,96 @@ export function ClientesView() {
 
       {tabActiva === 'clientes' && (
         <>
-          <form onSubmit={guardarCliente} className="space-y-3 rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta">
-            <h3 className="text-base font-bold text-slate-800">
-              {clienteEditandoId ? 'Editar cliente' : 'Nuevo cliente'}
-            </h3>
+          <div className="lg:grid lg:grid-cols-12 lg:gap-4">
+            <form onSubmit={guardarCliente} className="space-y-3 rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta lg:col-span-4 lg:sticky lg:top-5 lg:self-start">
+              <h3 className="text-base font-bold text-slate-800">
+                {clienteEditandoId ? 'Editar cliente' : 'Nuevo cliente'}
+              </h3>
 
-            <input
-              required
-              value={clienteForm.nombre}
-              onChange={(e) => setClienteForm((p) => ({ ...p, nombre: e.target.value }))}
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
-              placeholder="Nombre del cliente"
-            />
-            <input
-              value={clienteForm.direccion}
-              onChange={(e) => setClienteForm((p) => ({ ...p, direccion: e.target.value }))}
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
-              placeholder="Dirección"
-            />
-            <input
-              value={clienteForm.telefono}
-              onChange={(e) => setClienteForm((p) => ({ ...p, telefono: e.target.value }))}
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
-              placeholder="Teléfono"
-            />
-            <input
-              type="email"
-              value={clienteForm.email}
-              onChange={(e) => setClienteForm((p) => ({ ...p, email: e.target.value }))}
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
-              placeholder="Email"
-            />
+              <input
+                required
+                value={clienteForm.nombre}
+                onChange={(e) => setClienteForm((p) => ({ ...p, nombre: e.target.value }))}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
+                placeholder="Nombre del cliente"
+              />
+              <input
+                value={clienteForm.direccion}
+                onChange={(e) => setClienteForm((p) => ({ ...p, direccion: e.target.value }))}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
+                placeholder="Dirección"
+              />
+              <input
+                value={clienteForm.telefono}
+                onChange={(e) => setClienteForm((p) => ({ ...p, telefono: e.target.value }))}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
+                placeholder="Teléfono"
+              />
+              <input
+                type="email"
+                value={clienteForm.email}
+                onChange={(e) => setClienteForm((p) => ({ ...p, email: e.target.value }))}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
+                placeholder="Email"
+              />
 
-            <div className="grid grid-cols-2 gap-2">
-              <button className="rounded-xl bg-cotepa-rojo-500 px-4 py-3 text-sm font-bold text-white" type="submit">
-                {clienteEditandoId ? 'Actualizar' : 'Crear'}
-              </button>
-              <button
-                className="rounded-xl bg-slate-200 px-4 py-3 text-sm font-bold text-slate-700"
-                type="button"
-                onClick={limpiarFormCliente}
-              >
-                Limpiar
-              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button className="rounded-xl bg-cotepa-rojo-500 px-4 py-3 text-sm font-bold text-white" type="submit">
+                  {clienteEditandoId ? 'Actualizar' : 'Crear'}
+                </button>
+                <button
+                  className="rounded-xl bg-slate-200 px-4 py-3 text-sm font-bold text-slate-700"
+                  type="button"
+                  onClick={limpiarFormCliente}
+                >
+                  Limpiar
+                </button>
+              </div>
+            </form>
+
+            <div className="space-y-2 lg:col-span-8">
+              {cargando && <p className="text-sm font-semibold text-slate-600">Cargando clientes...</p>}
+              {!cargando &&
+                clientes.map((cliente) => (
+                  <article key={cliente.id} className="rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta">
+                    <p className="text-sm font-bold text-slate-800">{cliente.nombre}</p>
+                    <p className="text-xs text-slate-600">{cliente.telefono || 'Sin teléfono'} · {cliente.email || 'Sin email'}</p>
+                    <p className="mt-1 text-xs text-slate-500">{cliente.direccion || 'Sin dirección'}</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        className="rounded-xl bg-marca-50 px-3 py-2 text-xs font-bold text-marca-700"
+                        onClick={() => {
+                          setClienteEditandoId(cliente.id);
+                          setClienteForm({
+                            nombre: cliente.nombre || '',
+                            direccion: cliente.direccion || '',
+                            telefono: cliente.telefono || '',
+                            email: cliente.email || '',
+                          });
+                        }}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-xl bg-rose-100 px-3 py-2 text-xs font-bold text-rose-700"
+                        onClick={() => borrarCliente(cliente.id)}
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  </article>
+                ))}
             </div>
-          </form>
-
-          <div className="space-y-2 pb-20">
-            {cargando && <p className="text-sm font-semibold text-slate-600">Cargando clientes...</p>}
-            {!cargando &&
-              clientes.map((cliente) => (
-                <article key={cliente.id} className="rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta">
-                  <p className="text-sm font-bold text-slate-800">{cliente.nombre}</p>
-                  <p className="text-xs text-slate-600">{cliente.telefono || 'Sin teléfono'} · {cliente.email || 'Sin email'}</p>
-                  <p className="mt-1 text-xs text-slate-500">{cliente.direccion || 'Sin dirección'}</p>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      className="rounded-xl bg-marca-50 px-3 py-2 text-xs font-bold text-marca-700"
-                      onClick={() => {
-                        setClienteEditandoId(cliente.id);
-                        setClienteForm({
-                          nombre: cliente.nombre || '',
-                          direccion: cliente.direccion || '',
-                          telefono: cliente.telefono || '',
-                          email: cliente.email || '',
-                        });
-                      }}
-                    >
-                      Editar
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-xl bg-rose-100 px-3 py-2 text-xs font-bold text-rose-700"
-                      onClick={() => borrarCliente(cliente.id)}
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </article>
-              ))}
           </div>
         </>
       )}
 
       {tabActiva === 'equipos' && (
         <>
-          <form onSubmit={guardarEquipo} className="space-y-3 rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta">
+          <div className="lg:grid lg:grid-cols-12 lg:gap-4">
+          <form onSubmit={guardarEquipo} className="space-y-3 rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta lg:col-span-4 lg:sticky lg:top-5 lg:self-start">
             <h3 className="text-base font-bold text-slate-800">
               {equipoEditandoId ? 'Editar equipo' : 'Nuevo equipo'}
             </h3>
@@ -390,7 +473,7 @@ export function ClientesView() {
             </div>
           </form>
 
-          <div className="space-y-2 pb-20">
+          <div className="space-y-2 lg:col-span-8">
             <input
               value={busquedaEquipo}
               onChange={(e) => setBusquedaEquipo(e.target.value)}
@@ -444,6 +527,126 @@ export function ClientesView() {
                 No hay equipos que coincidan con la búsqueda.
               </p>
             )}
+          </div>
+          </div>
+        </>
+      )}
+
+      {tabActiva === 'materiales' && (
+        <>
+          <div className="lg:grid lg:grid-cols-12 lg:gap-4">
+          <form onSubmit={guardarMaterial} className="space-y-3 rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta lg:col-span-4 lg:sticky lg:top-5 lg:self-start">
+            <h3 className="text-base font-bold text-slate-800">
+              {materialEditandoId ? 'Editar material' : 'Nuevo material'}
+            </h3>
+
+            <input
+              required
+              value={materialForm.nombre}
+              onChange={(e) => setMaterialForm((p) => ({ ...p, nombre: e.target.value }))}
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
+              placeholder="Nombre del material"
+            />
+
+            <input
+              value={materialForm.descripcion}
+              onChange={(e) => setMaterialForm((p) => ({ ...p, descripcion: e.target.value }))}
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
+              placeholder="Descripcion"
+            />
+
+            <div className="grid grid-cols-3 gap-2">
+              <input
+                value={materialForm.unidad}
+                onChange={(e) => setMaterialForm((p) => ({ ...p, unidad: e.target.value }))}
+                className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
+                placeholder="Unidad"
+              />
+              <input
+                type="number"
+                min="0"
+                value={materialForm.stock_actual}
+                onChange={(e) => setMaterialForm((p) => ({ ...p, stock_actual: e.target.value }))}
+                className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
+                placeholder="Stock"
+              />
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={materialForm.precio_ref}
+                onChange={(e) => setMaterialForm((p) => ({ ...p, precio_ref: e.target.value }))}
+                className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
+                placeholder="Precio"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={materialForm.activo}
+                onChange={(e) => setMaterialForm((p) => ({ ...p, activo: e.target.checked }))}
+              />
+              Material activo
+            </label>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button className="rounded-xl bg-cotepa-rojo-500 px-4 py-3 text-sm font-bold text-white" type="submit">
+                {materialEditandoId ? 'Actualizar' : 'Crear'}
+              </button>
+              <button
+                className="rounded-xl bg-slate-200 px-4 py-3 text-sm font-bold text-slate-700"
+                type="button"
+                onClick={limpiarFormMaterial}
+              >
+                Limpiar
+              </button>
+            </div>
+          </form>
+
+          <div className="space-y-2 lg:col-span-8">
+            {cargando && <p className="text-sm font-semibold text-slate-600">Cargando materiales...</p>}
+            {!cargando &&
+              materialesInventario.map((material) => (
+                <article key={material.id} className="rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta">
+                  <p className="text-sm font-bold text-slate-800">{material.nombre}</p>
+                  <p className="text-xs text-slate-600">
+                    {material.descripcion || 'Sin descripcion'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Stock: {material.stock_actual} {material.unidad || 'ud'} · Precio ref: {material.precio_ref ?? 'N/D'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">Estado: {material.activo ? 'Activo' : 'Inactivo'}</p>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="rounded-xl bg-marca-50 px-3 py-2 text-xs font-bold text-marca-700"
+                      onClick={() => {
+                        setMaterialEditandoId(material.id);
+                        setMaterialForm({
+                          nombre: material.nombre || '',
+                          descripcion: material.descripcion || '',
+                          unidad: material.unidad || 'ud',
+                          stock_actual: String(material.stock_actual ?? 0),
+                          precio_ref: material.precio_ref ?? '',
+                          activo: Boolean(material.activo),
+                        });
+                      }}
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-xl bg-rose-100 px-3 py-2 text-xs font-bold text-rose-700"
+                      onClick={() => borrarMaterial(material.id)}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                </article>
+              ))}
+          </div>
           </div>
         </>
       )}
