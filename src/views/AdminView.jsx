@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
-import { DatabaseZap, Eraser, RefreshCw, ShieldUser } from 'lucide-react';
-import { cargarDatosDemoSat, limpiarDatosDemoSat } from '../services/demoDataService';
+import { RefreshCw, ShieldUser } from 'lucide-react';
 import { tieneConfiguracionSupabase } from '../services/supabaseClient';
-import { listarTecnicos } from '../services/tecnicosService';
 import {
   actualizarUsuarioSat,
   crearUsuarioSat,
@@ -20,10 +18,6 @@ const FORM_USUARIO_INICIAL = {
 };
 
 export function AdminView() {
-  const [trabajando, setTrabajando] = useState(false);
-  const [confirmandoLimpieza, setConfirmandoLimpieza] = useState(false);
-  const [error, setError] = useState('');
-  const [mensaje, setMensaje] = useState('');
   const [usuarios, setUsuarios] = useState([]);
   const [cargandoUsuarios, setCargandoUsuarios] = useState(false);
   const [guardandoUsuario, setGuardandoUsuario] = useState(false);
@@ -52,39 +46,6 @@ export function AdminView() {
       inicializarGestionUsuarios();
     }
   }, []);
-
-  async function ejecutarAccion(accion) {
-    setTrabajando(true);
-    setError('');
-    setMensaje('');
-
-    try {
-      const resultado = await accion();
-      setMensaje(
-        `Clientes: ${resultado.clientes} · Técnicos: ${resultado.tecnicos} · Equipos: ${resultado.equipos} · Órdenes: ${resultado.ordenes}`
-      );
-    } catch (err) {
-      setError(err.message || 'No se pudo ejecutar la acción de administración.');
-    } finally {
-      setTrabajando(false);
-    }
-  }
-
-  async function solicitarLimpieza() {
-    if (!confirmandoLimpieza) {
-      setError('');
-      setMensaje('');
-      setConfirmandoLimpieza(true);
-      return;
-    }
-
-    await ejecutarAccion(limpiarDatosDemoSat);
-    setConfirmandoLimpieza(false);
-  }
-
-  function cancelarLimpieza() {
-    setConfirmandoLimpieza(false);
-  }
 
   function resetFormularioUsuario() {
     setFormUsuario(FORM_USUARIO_INICIAL);
@@ -176,62 +137,13 @@ export function AdminView() {
     <section className="space-y-4 pb-20">
       <header className="rounded-2xl bg-marca-900 p-4 text-white shadow-lg">
         <div className="flex items-center gap-2">
-          <DatabaseZap className="h-5 w-5" />
-          <h2 className="text-lg font-bold">Administración interna</h2>
+          <ShieldUser className="h-5 w-5" />
+          <h2 className="text-lg font-bold">Administración</h2>
         </div>
         <p className="mt-2 text-sm text-slate-300">
-          Herramientas para cargar o limpiar datos demo del entorno de Supabase.
+          Gestión de usuarios y roles del sistema SAT.
         </p>
       </header>
-
-      {error && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      {mensaje && (
-        <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-          {mensaje}
-        </p>
-      )}
-
-      <div className="grid gap-3">
-        <button
-          type="button"
-          onClick={() => {
-            setConfirmandoLimpieza(false);
-            ejecutarAccion(cargarDatosDemoSat);
-          }}
-          disabled={trabajando}
-          className="flex items-center justify-center gap-2 rounded-2xl bg-cotepa-rojo-500 px-4 py-4 text-sm font-bold text-white disabled:opacity-60"
-        >
-          <RefreshCw className="h-4 w-4" />
-          {trabajando ? 'Procesando...' : 'Cargar demo'}
-        </button>
-
-        <div className="space-y-2 rounded-2xl border border-rose-200 bg-rose-50 p-3">
-          <button
-            type="button"
-            onClick={solicitarLimpieza}
-            disabled={trabajando}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-4 text-sm font-bold text-white disabled:opacity-60"
-          >
-            <Eraser className="h-4 w-4" />
-            {trabajando ? 'Procesando...' : confirmandoLimpieza ? 'Confirmar limpieza demo' : 'Limpiar demo'}
-          </button>
-
-          {confirmandoLimpieza && !trabajando && (
-            <>
-              <p className="text-sm font-semibold text-rose-800">
-                Esta acción eliminará los datos demo y de prueba detectados. Pulsa de nuevo para confirmar.
-              </p>
-              <button
-                type="button"
-                onClick={cancelarLimpieza}
-                className="w-full rounded-2xl border border-rose-300 bg-white px-4 py-3 text-sm font-semibold text-rose-700"
-              >
-                Cancelar
-              </button>
-            </>
-          )}
-        </div>
-      </div>
 
       <section className="space-y-3 rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta">
         <header className="flex items-center gap-2">
@@ -240,8 +152,8 @@ export function AdminView() {
         </header>
 
         <p className="text-sm text-slate-600">
-          CRUD de usuarios autenticados y asignacion de rol SAT (admin, oficina, tecnico). Para rol tecnico puedes
-          vincular un tecnico activo.
+          CRUD de usuarios autenticados y asignacion de rol SAT (admin, oficina, tecnico). Para rol tecnico se crea
+          automaticamente el registro de tecnico.
         </p>
 
         {errorUsuarios && (
