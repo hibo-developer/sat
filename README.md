@@ -113,6 +113,30 @@ Para limpiar datos de pruebas/demo creados por este proyecto:
 - [supabase/99_cleanup_pruebas.sql](supabase/99_cleanup_pruebas.sql)
 - [scripts/cleanup-test-data.ps1](scripts/cleanup-test-data.ps1): limpieza directa por REST usando `.env`
 
+## CRUD de usuarios y roles (Admin)
+
+Se incluye la funcion Edge:
+
+- [supabase/functions/admin-users/index.ts](supabase/functions/admin-users/index.ts)
+
+Permite, desde la vista Admin de la app:
+
+1. Listar usuarios de Auth y su rol SAT.
+2. Crear usuario (Auth) y asignar rol (`admin`, `oficina`, `tecnico`).
+3. Editar email, contrasena, rol y tecnico vinculado.
+4. Eliminar usuario (desvincula tecnico y borra perfil SAT/Auth).
+
+Despliegue:
+
+```bash
+supabase functions deploy admin-users
+```
+
+Requisitos:
+
+1. Usuario autenticado con rol `admin` en `public.usuarios_sat`.
+2. Tener aplicada la migracion [supabase/04_security_roles_rls.sql](supabase/04_security_roles_rls.sql).
+
 Orden recomendado en SQL Editor:
 
 1. Ejecutar [supabase/01_schema_sat.sql](supabase/01_schema_sat.sql)

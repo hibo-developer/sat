@@ -20,6 +20,56 @@ function validarEstadoEditable(estado) {
   return estadoLimpio;
 }
 
+async function obtenerContextoUsuarioSat(supabase) {
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+
+  if (authError) {
+    throw new Error(`No se pudo validar la sesion actual: ${authError.message}`);
+  }
+
+  const usuario = authData?.user;
+  if (!usuario) {
+    throw new Error('No hay una sesion activa. Inicia sesion para operar ordenes.');
+  }
+
+  const [rolRsp, tecnicoRsp] = await Promise.all([
+    supabase.from('usuarios_sat').select('rol').eq('user_id', usuario.id).maybeSingle(),
+    supabase.from('tecnicos').select('id, nombre, activo').eq('user_id', usuario.id).maybeSingle(),
+  ]);
+
+  if (rolRsp.error) {
+    throw new Error(`No se pudo validar el rol del usuario: ${rolRsp.error.message}`);
+  }
+
+  if (tecnicoRsp.error) {
+    throw new Error(`No se pudo validar el tecnico vinculado al usuario: ${tecnicoRsp.error.message}`);
+  }
+
+  return {
+    rol: rolRsp.data?.rol || null,
+    tecnicoId: tecnicoRsp.data?.id || null,
+    tecnicoNombre: tecnicoRsp.data?.nombre || null,
+  };
+}
+
+function validarAsignacionTecnicoEnOrden(contextoUsuario, ordenActual, accion) {
+  if (contextoUsuario.rol !== 'tecnico') {
+    return;
+  }
+
+  if (!contextoUsuario.tecnicoId) {
+    throw new Error(
+      'Tu usuario esta en rol tecnico pero no esta vinculado a ningun registro en tecnicos. Vincula auth.users.id en tecnicos.user_id para poder ' +
+        accion +
+        ' ordenes.',
+    );
+  }
+
+  if (ordenActual.tecnico_id !== contextoUsuario.tecnicoId) {
+    throw new Error('Solo puedes operar ordenes asignadas a tu tecnico. Revisa la asignacion del tecnico en la orden.');
+  }
+}
+
 async function validarReferenciasOrden(supabase, ordenNueva) {
   const { cliente_id: clienteId, equipo_id: equipoId, tecnico_id: tecnicoId } = ordenNueva;
 
@@ -203,6 +253,7 @@ export async function crearOrdenTrabajo(ordenNueva) {
  */
 export async function finalizarOrdenTrabajo(idOrden, { tareasRealizadas, fotoUrl, tiempoEmpleadoMinutos }) {
   const supabase = obtenerClienteSupabase();
+  const contextoUsuario = await obtenerContextoUsuarioSat(supabase);
 
   const ordenId = limpiarTexto(idOrden);
   if (!ordenId) {
@@ -235,6 +286,8 @@ export async function finalizarOrdenTrabajo(idOrden, { tareasRealizadas, fotoUrl
     throw new Error('La orden seleccionada ya está finalizada.');
   }
 
+  validarAsignacionTecnicoEnOrden(contextoUsuario, ordenActual, 'finalizar');
+
   const actualizacion = {
     estado: 'finalizado',
     tareas_realizadas: tareas,
@@ -259,6 +312,7 @@ export async function finalizarOrdenTrabajo(idOrden, { tareasRealizadas, fotoUrl
 
 export async function actualizarOrdenTrabajo(idOrden, cambios) {
   const supabase = obtenerClienteSupabase();
+  const contextoUsuario = await obtenerContextoUsuarioSat(supabase);
   const ordenId = limpiarTexto(idOrden);
 
   if (!ordenId) {
@@ -291,6 +345,8 @@ export async function actualizarOrdenTrabajo(idOrden, cambios) {
     throw new Error('No se puede editar una orden que ya está finalizada.');
   }
 
+  validarAsignacionTecnicoEnOrden(contextoUsuario, ordenActual, 'editar');
+
   await validarReferenciasOrden(supabase, {
     cliente_id: ordenActual.cliente_id,
     equipo_id: ordenActual.equipo_id,
@@ -309,6 +365,12 @@ export async function actualizarOrdenTrabajo(idOrden, cambios) {
     .single();
 
   if (error) {
+    if ((error.message || '').includes('Solo puedes editar ordenes asignadas a tu tecnico')) {
+      throw new Error(
+        'Solo puedes editar ordenes asignadas a tu tecnico. Verifica que el usuario actual este vinculado en tecnicos.user_id y que la orden tenga ese tecnico.',
+      );
+    }
+
     throw new Error(`No se pudo actualizar la orden de trabajo: ${error.message}`);
   }
 
