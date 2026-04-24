@@ -3,6 +3,8 @@ dist
 .vite
 build
 release-desktop
+release-desktop-verify
+release-desktop-verify2
 .env
 .env.*
 !.env.example
