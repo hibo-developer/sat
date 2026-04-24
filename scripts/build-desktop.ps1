@@ -1,3 +1,8 @@
+param(
+  [ValidateSet("nsis", "portable")]
+  [string]$Target = "nsis"
+)
+
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -31,9 +36,9 @@ function Stop-DesktopProcesses {
 }
 
 function Build-DesktopPortable([string]$outputDir) {
-  npx electron-builder --win portable --config.directories.output="$outputDir"
+  npx electron-builder --win $Target --config.directories.output="$outputDir"
   if ($LASTEXITCODE -ne 0) {
-    throw "Fallo en electron-builder para output '$outputDir' (exit code $LASTEXITCODE)."
+    throw "Fallo en electron-builder para target '$Target' y output '$outputDir' (exit code $LASTEXITCODE)."
   }
 }
 
@@ -41,6 +46,18 @@ function Ensure-ReleaseFolder([string]$path) {
   if (-not (Test-Path $path)) {
     New-Item -ItemType Directory -Path $path | Out-Null
   }
+}
+
+function Get-BuildArtifact([string]$outputDir) {
+  $artifact = Get-ChildItem -Path $outputDir -Filter *.exe -File -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+
+  if (-not $artifact) {
+    throw "No se encontro ningun .exe generado en '$outputDir'."
+  }
+
+  return $artifact
 }
 
 Push-Location $repoRoot
@@ -62,25 +79,22 @@ try {
     Write-Warning "release-desktop esta bloqueado. Se usara carpeta de fallback para empaquetar."
   }
 
-  Write-Host "[4/4] Empaquetando .exe portable..."
+  Write-Host "[4/4] Empaquetando build Windows ($Target)..."
   $outputDir = if ($canUseDefaultOutput) { $defaultOutputDir } else { $fallbackOutputDir }
   Build-DesktopPortable $outputDir
 
-  $exeName = "SAT Movil COTEPA 0.1.0.exe"
-  $exePath = Join-Path $outputDir $exeName
-  if (-not (Test-Path $exePath)) {
-    throw "No se encontró el ejecutable generado en '$exePath'."
-  }
+  $artifact = Get-BuildArtifact $outputDir
+  $artifactPath = $artifact.FullName
 
   if ($outputDir -ne $defaultOutputDir) {
     Ensure-ReleaseFolder $defaultOutputDir
-    $finalExePath = Join-Path $defaultOutputDir $exeName
-    Copy-Item -Path $exePath -Destination $finalExePath -Force
-    $exePath = $finalExePath
+    $finalArtifactPath = Join-Path $defaultOutputDir $artifact.Name
+    Copy-Item -Path $artifactPath -Destination $finalArtifactPath -Force
+    $artifactPath = $finalArtifactPath
   }
 
   Write-Host "Build desktop completado correctamente:"
-  Get-Item $exePath | Select-Object FullName, Length, LastWriteTime | Format-List
+  Get-Item $artifactPath | Select-Object FullName, Length, LastWriteTime | Format-List
 }
 finally {
   Pop-Location

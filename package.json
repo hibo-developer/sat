@@ -11,10 +11,12 @@
     "build:pwsh": "powershell -ExecutionPolicy Bypass -File ./scripts/build.ps1",
     "build:apk:pwsh": "powershell -ExecutionPolicy Bypass -File ./scripts/build-apk.ps1",
     "build:desktop:pwsh": "powershell -ExecutionPolicy Bypass -File ./scripts/build-desktop.ps1",
+    "build:desktop:portable:pwsh": "powershell -ExecutionPolicy Bypass -File ./scripts/build-desktop.ps1 -Target portable",
     "preview": "vite preview",
     "desktop:dev": "concurrently \"npm:dev\" \"wait-on tcp:5173 && electron .\"",
     "desktop:start": "npm run build && electron .",
-    "desktop:build:win": "powershell -ExecutionPolicy Bypass -File ./scripts/build-desktop.ps1"
+    "desktop:build:win": "powershell -ExecutionPolicy Bypass -File ./scripts/build-desktop.ps1",
+    "desktop:build:portable": "powershell -ExecutionPolicy Bypass -File ./scripts/build-desktop.ps1 -Target portable"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.1",
@@ -52,11 +54,16 @@
     },
     "win": {
       "target": [
-        "portable"
+        "nsis"
       ],
       "icon": "electron/assets/app-icon.ico",
       "signAndEditExecutable": false,
       "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
     }
   }
 }
