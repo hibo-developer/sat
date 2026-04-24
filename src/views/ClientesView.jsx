@@ -6,12 +6,6 @@ import {
   listarClientes,
 } from '../services/clientesService';
 import {
-  actualizarTecnico,
-  crearTecnico,
-  eliminarTecnico,
-  listarTecnicos,
-} from '../services/tecnicosService';
-import {
   actualizarEquipo,
   crearEquipo,
   eliminarEquipo,
@@ -26,12 +20,6 @@ const FORM_CLIENTE_INICIAL = {
   email: '',
 };
 
-const FORM_TECNICO_INICIAL = {
-  nombre: '',
-  especialidad: '',
-  activo: true,
-};
-
 const FORM_EQUIPO_INICIAL = {
   cliente_id: '',
   nombre: '',
@@ -44,7 +32,6 @@ const FORM_EQUIPO_INICIAL = {
 export function ClientesView() {
   const [tabActiva, setTabActiva] = useState('clientes');
   const [clientes, setClientes] = useState([]);
-  const [tecnicos, setTecnicos] = useState([]);
   const [equipos, setEquipos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
@@ -52,9 +39,6 @@ export function ClientesView() {
 
   const [clienteForm, setClienteForm] = useState(FORM_CLIENTE_INICIAL);
   const [clienteEditandoId, setClienteEditandoId] = useState('');
-
-  const [tecnicoForm, setTecnicoForm] = useState(FORM_TECNICO_INICIAL);
-  const [tecnicoEditandoId, setTecnicoEditandoId] = useState('');
 
   const [equipoForm, setEquipoForm] = useState(FORM_EQUIPO_INICIAL);
   const [equipoEditandoId, setEquipoEditandoId] = useState('');
@@ -95,13 +79,11 @@ export function ClientesView() {
     setError('');
 
     try {
-      const [datosClientes, datosTecnicos, datosEquipos] = await Promise.all([
+      const [datosClientes, datosEquipos] = await Promise.all([
         listarClientes(),
-        listarTecnicos(),
         listarEquipos(),
       ]);
       setClientes(datosClientes);
-      setTecnicos(datosTecnicos);
       setEquipos(datosEquipos);
     } catch (err) {
       setError(err.message || 'No se pudieron cargar clientes, técnicos y equipos.');
@@ -117,11 +99,6 @@ export function ClientesView() {
   function limpiarFormCliente() {
     setClienteForm(FORM_CLIENTE_INICIAL);
     setClienteEditandoId('');
-  }
-
-  function limpiarFormTecnico() {
-    setTecnicoForm(FORM_TECNICO_INICIAL);
-    setTecnicoEditandoId('');
   }
 
   function limpiarFormEquipo() {
@@ -162,42 +139,6 @@ export function ClientesView() {
       await recargarDatos();
     } catch (err) {
       setError(err.message || 'No se pudo eliminar el cliente.');
-    }
-  }
-
-  async function guardarTecnico(evento) {
-    evento.preventDefault();
-    setMensaje('');
-    setError('');
-
-    try {
-      if (tecnicoEditandoId) {
-        await actualizarTecnico(tecnicoEditandoId, tecnicoForm);
-        setMensaje('Técnico actualizado correctamente.');
-      } else {
-        await crearTecnico(tecnicoForm);
-        setMensaje('Técnico creado correctamente.');
-      }
-      limpiarFormTecnico();
-      await recargarDatos();
-    } catch (err) {
-      setError(err.message || 'No se pudo guardar el técnico.');
-    }
-  }
-
-  async function borrarTecnico(idTecnico) {
-    setMensaje('');
-    setError('');
-
-    try {
-      await eliminarTecnico(idTecnico);
-      setMensaje('Técnico eliminado correctamente.');
-      if (tecnicoEditandoId === idTecnico) {
-        limpiarFormTecnico();
-      }
-      await recargarDatos();
-    } catch (err) {
-      setError(err.message || 'No se pudo eliminar el técnico.');
     }
   }
 
@@ -259,10 +200,10 @@ export function ClientesView() {
     <section className="space-y-4">
       <header className="rounded-2xl bg-marca-900 p-4 text-white shadow-lg">
         <h2 className="text-lg font-bold">Catálogos SAT</h2>
-        <p className="mt-1 text-sm text-slate-200">Gestión de clientes, técnicos y equipos en entorno COTEPA.</p>
+        <p className="mt-1 text-sm text-slate-200">Gestión de clientes y equipos en entorno COTEPA.</p>
       </header>
 
-      <div className="grid grid-cols-3 gap-2 rounded-2xl border border-marca-100 bg-marca-50 p-1">
+      <div className="grid grid-cols-2 gap-2 rounded-2xl border border-marca-100 bg-marca-50 p-1">
         <button
           type="button"
           onClick={() => setTabActiva('clientes')}
@@ -271,15 +212,6 @@ export function ClientesView() {
           }`}
         >
           Clientes
-        </button>
-        <button
-          type="button"
-          onClick={() => setTabActiva('tecnicos')}
-          className={`rounded-xl px-3 py-3 text-sm font-bold ${
-            tabActiva === 'tecnicos' ? 'bg-cotepa-rojo-500 text-white shadow' : 'text-marca-700'
-          }`}
-        >
-          Técnicos
         </button>
         <button
           type="button"
@@ -375,88 +307,6 @@ export function ClientesView() {
                       type="button"
                       className="rounded-xl bg-rose-100 px-3 py-2 text-xs font-bold text-rose-700"
                       onClick={() => borrarCliente(cliente.id)}
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </article>
-              ))}
-          </div>
-        </>
-      )}
-
-      {tabActiva === 'tecnicos' && (
-        <>
-          <form onSubmit={guardarTecnico} className="space-y-3 rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta">
-            <h3 className="text-base font-bold text-slate-800">
-              {tecnicoEditandoId ? 'Editar técnico' : 'Nuevo técnico'}
-            </h3>
-
-            <input
-              required
-              value={tecnicoForm.nombre}
-              onChange={(e) => setTecnicoForm((p) => ({ ...p, nombre: e.target.value }))}
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
-              placeholder="Nombre del técnico"
-            />
-            <input
-              value={tecnicoForm.especialidad}
-              onChange={(e) => setTecnicoForm((p) => ({ ...p, especialidad: e.target.value }))}
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
-              placeholder="Especialidad"
-            />
-
-            <label className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={tecnicoForm.activo}
-                onChange={(e) => setTecnicoForm((p) => ({ ...p, activo: e.target.checked }))}
-              />
-              Técnico activo
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button className="rounded-xl bg-cotepa-rojo-500 px-4 py-3 text-sm font-bold text-white" type="submit">
-                {tecnicoEditandoId ? 'Actualizar' : 'Crear'}
-              </button>
-              <button
-                className="rounded-xl bg-slate-200 px-4 py-3 text-sm font-bold text-slate-700"
-                type="button"
-                onClick={limpiarFormTecnico}
-              >
-                Limpiar
-              </button>
-            </div>
-          </form>
-
-          <div className="space-y-2 pb-20">
-            {cargando && <p className="text-sm font-semibold text-slate-600">Cargando técnicos...</p>}
-            {!cargando &&
-              tecnicos.map((tecnico) => (
-                <article key={tecnico.id} className="rounded-2xl border border-marca-100 bg-white p-4 shadow-tarjeta">
-                  <p className="text-sm font-bold text-slate-800">{tecnico.nombre}</p>
-                  <p className="text-xs text-slate-600">
-                    {tecnico.especialidad || 'Sin especialidad'} · {tecnico.activo ? 'Activo' : 'Inactivo'}
-                  </p>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      className="rounded-xl bg-marca-50 px-3 py-2 text-xs font-bold text-marca-700"
-                      onClick={() => {
-                        setTecnicoEditandoId(tecnico.id);
-                        setTecnicoForm({
-                          nombre: tecnico.nombre || '',
-                          especialidad: tecnico.especialidad || '',
-                          activo: Boolean(tecnico.activo),
-                        });
-                      }}
-                    >
-                      Editar
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-xl bg-rose-100 px-3 py-2 text-xs font-bold text-rose-700"
-                      onClick={() => borrarTecnico(tecnico.id)}
                     >
                       Eliminar
                     </button>
