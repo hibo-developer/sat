@@ -5,6 +5,7 @@ build
 release-desktop
 release-desktop-verify
 release-desktop-verify2
+release-desktop-verify3
 .env
 .env.*
 !.env.example
