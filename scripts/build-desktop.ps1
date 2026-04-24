@@ -81,6 +81,9 @@ try {
 
   Write-Host "[4/4] Empaquetando build Windows ($Target)..."
   $outputDir = if ($canUseDefaultOutput) { $defaultOutputDir } else { $fallbackOutputDir }
+  if ($outputDir -eq $fallbackOutputDir) {
+    Remove-DirSafe $fallbackOutputDir | Out-Null
+  }
   Build-DesktopPortable $outputDir
 
   $artifact = Get-BuildArtifact $outputDir

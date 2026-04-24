@@ -44,6 +44,7 @@
   "build": {
     "appId": "com.cotepa.sat.desktop",
     "productName": "SAT Movil COTEPA",
+    "artifactName": "SAT-Movil-COTEPA-Setup-${version}-${arch}.${ext}",
     "files": [
       "dist/**/*",
       "electron/**/*",
